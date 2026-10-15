@@ -38,6 +38,9 @@
 		h1, h2, p { margin-top: 0; }
 		h1 { margin-bottom: 0; font-family: Georgia, serif; font-size: clamp(2rem, 6vw, 3.7rem); line-height: .98; letter-spacing: -.04em; }
 		.count-badge { display: flex; align-items: center; gap: 8px; padding: 9px 13px; border: 1px solid rgba(255,255,255,.25); border-radius: 99px; color: #e7f4e9; font-size: .85rem; white-space: nowrap; }
+		.sync-status { display: block; margin-top: 3px; color: #c9e2da; font-size: .68rem; font-weight: 700; letter-spacing: .02em; text-align: right; }
+		.sync-status.is-saving { color: var(--yellow); }
+		.sync-status.is-error { color: #ffb3a4; }
 		main { padding: 24px 5vw 130px; }
 		.toolbar { display: grid; gap: 12px; margin-bottom: 20px; }
 		.search-wrap { position: relative; }
@@ -107,7 +110,7 @@
 		<header class="topbar">
 			<div class="topbar-inner brand-row">
 				<div><p class="eyebrow">Control de despensa</p><h1>Inventario</h1></div>
-				<div class="count-badge"><span aria-hidden="true">●</span><span id="itemCount">0 productos</span></div>
+				<div class="count-badge"><span aria-hidden="true">●</span><span><span id="itemCount">0 productos</span><span class="sync-status" id="syncStatus" role="status" aria-live="polite">Conectando...</span></span></div>
 			</div>
 		</header>
 
@@ -159,23 +162,55 @@
 	</div>
 
 	<script>
-		const STORAGE_KEY = 'despensa-inventario-v1';
+		const BIN_ID = '6ad02600ffd5d160536c0837';
+		const MASTER_KEY = '$2a$10$sSrnNub5NkORiFfoSY3CHeEPAHamDDnKoGO0KKOSfQgVG3AjdpRgq';
+		const JSONBIN_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
+		const JSONBIN_HEADERS = { 'X-Master-Key': MASTER_KEY, 'Content-Type': 'application/json' };
 		const demoProducts = [
 			{ id: 'demo-1', quantity: 24, name: 'Jamón serrano', brand: 'Monteverde', type: 'Curado', date: '2026-10-12', image: 'fotos/jamon-serrano.jpg' },
 			{ id: 'demo-2', quantity: 11, name: 'Jamón ahumado', brand: 'La Montaña', type: 'Ahumado', date: '2026-10-08', image: 'fotos/jamon-ahumado.jpg' },
 			{ id: 'demo-3', quantity: 36, name: 'Jamón de pavo', brand: 'Del Prado', type: 'Pavo', date: '2026-09-27', image: 'fotos/jamon-pavo.jpg' },
 			{ id: 'demo-4', quantity: 8, name: 'Lomo embuchado', brand: 'Casa Norte', type: 'Embutido', date: '2026-10-03', image: 'fotos/lomo.jpg' }
 		];
-		let products = loadProducts();
+		let products = [];
 		let selectedId = null;
 		let sortState = { key: null, direction: 1 };
+		let saveQueue = Promise.resolve();
 
 		const $ = (id) => document.getElementById(id);
-		function loadProducts() {
-			try { const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)); return Array.isArray(saved) ? saved : demoProducts; }
-			catch (error) { return demoProducts; }
+		function setSyncStatus(message, state = '') { const status = $('syncStatus'); status.textContent = message; status.className = `sync-status ${state}`; }
+		function normalizeProducts(items) { return items.map((item, index) => ({ id: String(item.id ?? `remote-${index}-${Date.now()}`), quantity: Number(item.quantity ?? item.cantidad ?? 0), name: item.name ?? item.nombre ?? '', brand: item.brand ?? item.marca ?? '', type: item.type ?? item.tipo ?? '', date: item.date ?? item.fecha ?? '', image: item.image ?? item.imagen ?? '' })); }
+		async function loadProducts() {
+			setSyncStatus('Descargando...');
+			try {
+				const response = await fetch(JSONBIN_URL, { headers: JSONBIN_HEADERS });
+				if (!response.ok) throw new Error(`GET ${response.status}`);
+				const payload = await response.json();
+				const record = payload.record;
+				const remoteProducts = Array.isArray(record) ? record : record && Array.isArray(record.products) ? record.products : [];
+				products = normalizeProducts(remoteProducts);
+				setSyncStatus('Sincronizado');
+			} catch (error) {
+				products = demoProducts;
+				setSyncStatus('Sin conexión · demo', 'is-error');
+				console.error('No se pudo leer el inventario desde JSONBin:', error);
+			}
+			refreshFilterOptions();
+			render();
 		}
-		function persist() { localStorage.setItem(STORAGE_KEY, JSON.stringify(products)); }
+		function persist() {
+			const snapshot = products.map((item) => ({ ...item }));
+			setSyncStatus('Guardando...', 'is-saving');
+			saveQueue = saveQueue.then(async () => {
+				const response = await fetch(JSONBIN_URL, { method: 'PUT', headers: JSONBIN_HEADERS, body: JSON.stringify(snapshot) });
+				if (!response.ok) throw new Error(`PUT ${response.status}`);
+				setSyncStatus('Sincronizado');
+			}).catch((error) => {
+				setSyncStatus('Error al guardar', 'is-error');
+				console.error('No se pudo guardar el inventario en JSONBin:', error);
+			});
+			return saveQueue;
+		}
 		function formatDate(value) { if (!value) return 'Sin fecha'; return new Intl.DateTimeFormat('es-CL', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value + 'T00:00:00')); }
 		function escapeHTML(value) { return String(value).replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' }[char])); }
 
@@ -214,7 +249,7 @@
 		document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && $('modalBackdrop').classList.contains('is-open')) closeModal(); });
 		$('deleteButton').addEventListener('click', () => { const selected = products.find((item) => item.id === selectedId); if (!selected || !window.confirm(`¿Eliminar “${selected.name}” del inventario?`)) return; products = products.filter((item) => item.id !== selectedId); selectedId = null; persist(); refreshFilterOptions(); render(); });
 		$('productForm').addEventListener('submit', (event) => { event.preventDefault(); const data = new FormData(event.target); const item = { id: `product-${Date.now()}`, quantity: Number(data.get('quantity')), name: data.get('name').trim(), brand: data.get('brand').trim(), type: data.get('type').trim(), date: data.get('date'), image: data.get('image').trim() }; if (!item.name || !item.brand || !item.type || !item.date || item.quantity < 0) { $('formError').textContent = 'Revisa los campos obligatorios antes de guardar.'; return; } products.unshift(item); selectedId = item.id; persist(); refreshFilterOptions(); render(); closeModal(); });
-		refreshFilterOptions(); render();
+		loadProducts();
 	</script>
 </body>
 </html>
