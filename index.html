@@ -182,17 +182,17 @@
 				const payload = await response.json(), record = payload.record;
 				const remote = Array.isArray(record) ? record : record && Array.isArray(record.products) ? record.products : [];
 				products = normalizeProducts(remote);
-				if (record && !Array.isArray(record) && record.updatedAt) setSyncStatus(`Actualizado: ${formatDateTime(record.updatedAt)}`);
-				else setSyncStatus('Actualizado: sin registro');
+				if (record && !Array.isArray(record) && record.updatedAt) setSyncStatus(`Act.: ${formatDateTime(record.updatedAt)}`);
+				else setSyncStatus('Act.: sin registro');
 			} catch (error) { products = demoProducts; setSyncStatus('Sin conexión · demo', 'is-error'); console.error('No se pudo leer el inventario desde JSONBin:', error); }
 			refreshFilterOptions(); render();
 		}
 		function persist() {
 			const updatedAt = new Date().toISOString();
-			document.title = `Despensa | Actualizado ${formatDateTime(updatedAt)}`;
+			document.title = `Despensa | Act. ${formatDateTime(updatedAt)}`;
 			const snapshot = { updatedAt, products: products.map((item) => ({ ...item, lots: item.lots || [] })) };
-			setSyncStatus(`Actualizado: ${formatDateTime(updatedAt)}`, 'is-saving');
-			saveQueue = saveQueue.then(async () => { const response = await fetch(JSONBIN_URL, { method: 'PUT', headers: JSONBIN_HEADERS, body: JSON.stringify(snapshot) }); if (!response.ok) throw new Error(`PUT ${response.status}`); setSyncStatus(`Actualizado: ${formatDateTime(updatedAt)}`); }).catch((error) => { setSyncStatus('Error al guardar', 'is-error'); console.error('No se pudo guardar el inventario en JSONBin:', error); });
+			setSyncStatus(`Act.: ${formatDateTime(updatedAt)}`, 'is-saving');
+			saveQueue = saveQueue.then(async () => { const response = await fetch(JSONBIN_URL, { method: 'PUT', headers: JSONBIN_HEADERS, body: JSON.stringify(snapshot) }); if (!response.ok) throw new Error(`PUT ${response.status}`); setSyncStatus(`Act.: ${formatDateTime(updatedAt)}`); }).catch((error) => { setSyncStatus('Error al guardar', 'is-error'); console.error('No se pudo guardar el inventario en JSONBin:', error); });
 			return saveQueue;
 		}
 		function formatDate(value) { if (!value) return 'Sin fecha'; return new Intl.DateTimeFormat('es-CL', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(`${value}T00:00:00`)); }
